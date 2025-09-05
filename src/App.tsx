@@ -21,42 +21,9 @@ import {
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-
-interface PingLocation {
-  geo: string;
-  isp: string;
-  loss: number;
-  sent: number;
-  last: number | null;
-  avg: number | null;
-  best: number | null;
-  worst: number | null;
-  stdev: number | null;
-  status: 'testing' | 'complete' | 'failed';
-}
-
-interface DeviceInfo {
-  ip: string;
-  location: string;
-  isp: string;
-  asn: string;
-  country: string;
-  city: string;
-  timezone: string;
-}
-
-interface TestResult {
-  command: string;
-  timestamp: string;
-  data: any;
-  type: 'ping' | 'dig' | 'bgp' | 'traceroute' | 'mtr' | 'whois';
-}
-
-interface ModalData {
-  isOpen: boolean;
-  type: 'mtr' | 'chart' | 'error' | null;
-  data?: any;
-}
+import apiService, { ApiError } from './services/apiService';
+import wsService from './services/websocketService';
+import type { PingLocation, DeviceInfo, TestResult, ModalData } from './types';
 
 function App() {
   const [input, setInput] = useState('');
@@ -67,116 +34,84 @@ function App() {
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
   const [isRealTimePing, setIsRealTimePing] = useState(false);
   const [targetHost, setTargetHost] = useState('google.com');
+  const [wsConnected, setWsConnected] = useState(false);
+  const [pingSessionId, setPingSessionId] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  // Initialize global ping locations
+  // Initialize global ping locations (fallback for when backend is not available)
   const initializePingLocations = (): PingLocation[] => [
     { geo: 'Canada, BC, Vancouver', isp: 'Shaw', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'USA, CA, Fremont', isp: 'Hurricane', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, Fremont', isp: 'IT7 FMT2', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, Fremont', isp: 'Linode', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, San Francisco', isp: 'Digital Ocean', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, Santa Clara', isp: 'Hurricane', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, Los Angeles', isp: 'Hurricane', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, Los Angeles', isp: 'DMIT', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'USA, CA, Los Angeles', isp: 'Vultr', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CA, Los Angeles', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'USA, WA, Seattle', isp: 'Google', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CO, Denver', isp: 'Cogent', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, CO, Denver', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, TX, Fort Worth', isp: 'AT&T', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, TX, Dallas', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, MO, Kansas City', isp: 'Rozint', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, IL, Chicago', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, IL, Chicago', isp: 'Infraly', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, NY, Buffalo', isp: 'ColoCrossing', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'USA, VA, Ashburn', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'USA, NY, New York', isp: 'Hurricane', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Canada, QC, Montreal', isp: 'OVH', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Chile, Santiago', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Paraguay, C.D.E.', isp: 'ASISPY', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Brazil, Sao Paulo', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Brazil, Sao Paulo', isp: 'HyperFilter', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Morocco, Fez', isp: 'Hostoweb', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Spain, Madrid', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'UK, Manchester', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'UK, London', isp: 'Cosmic Global', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'France, Paris', isp: 'Online.net', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'France, Paris', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Netherlands, Amsterdam', isp: 'Online.net', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Netherlands, Amsterdam', isp: 'Eranium', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Netherlands, Amsterdam', isp: 'Interhost', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Norway, Sandefjord', isp: 'Gigahost', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Switzerland, Zurich', isp: 'iFog', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'Germany, Frankfurt', isp: 'ZetNet', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Germany, Nuremberg', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Slovenia, Maribor', isp: 'PipeHost', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Austria, Vienna', isp: 'PipeHost', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Kosovo, Prishtine', isp: 'RS Computers', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Romania, Bucharest', isp: 'ZetNet', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Romania, Bucharest', isp: 'M247', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Turkey, Bursa', isp: 'Oneprovider', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Cyprus, Limassol', isp: 'CL8', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Israel, Tel Aviv', isp: 'Oneprovider', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Israel, Tel Aviv', isp: 'Interhost', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'UAE, Dubai', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Iran, Tabriz', isp: 'ArvanCloud', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Iran, Tehran', isp: 'Iranet', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Iran, Tehran', isp: 'MHOST', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'India, Mumbai', isp: 'Vultr', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'India, Bengaluru', isp: 'Digital Ocean', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'India, Chennai', isp: 'NetActuate', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Jessore', isp: 'Race Online', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Dot Internet', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Summit', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'BTCL', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Hello Tech', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Mango', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Spectra', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Layer3', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'STT Startrek', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Link3', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Dhaka', isp: 'Race Online', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Bangladesh, Chittagong', isp: 'Race Online', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Thailand, Bangkok', isp: 'SG.GS', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
     { geo: 'Singapore', isp: 'Digital Ocean', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Singapore', isp: 'SG.GS', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'South Korea, Seoul', isp: 'Phylaxis', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Japan, Tokyo', isp: 'DODO', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Japan, Tokyo', isp: 'Vultr', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Australia, Sydney', isp: 'Vultr', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'Taiwan, Taichung', isp: 'Google', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' },
-    { geo: 'China, Chengdu', isp: 'Tencent', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Chongqing', isp: 'Tencent', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Guiyang', isp: 'Huawei', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Guangzhou', isp: 'Tencent', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Hubei', isp: 'China Unicom', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Nanjing', isp: 'Tencent', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Jiangsu', isp: 'China Telecom', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Jiangsu', isp: 'China Mobile', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Lishui', isp: 'China Telecom', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Lishui', isp: 'China Unicom', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' },
-    { geo: 'China, Lishui', isp: 'China Mobile', loss: 100, sent: 1, last: null, avg: null, best: null, worst: null, stdev: null, status: 'failed' }
+    { geo: 'Japan, Tokyo', isp: 'Vultr', loss: 0, sent: 0, last: null, avg: null, best: null, worst: null, stdev: null, status: 'testing' }
   ];
-
-  // Simulate device IP detection
   useEffect(() => {
-    const detectDevice = async () => {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setDeviceInfo({
-        ip: '203.0.113.42',
-        location: 'San Francisco, CA, USA',
-        isp: 'Cloudflare Inc.',
-        asn: 'AS13335',
-        country: 'United States',
-        city: 'San Francisco',
-        timezone: 'America/Los_Angeles'
-      });
+    const initializeApp = async () => {
+      try {
+        // Connect to WebSocket
+        await wsService.connect();
+        setWsConnected(true);
+        console.log('WebSocket connected successfully');
+
+        // Load ping locations
+        const locationsData = await apiService.getPingLocations();
+        const formattedLocations = locationsData.locations.map(loc => ({
+          geo: `${loc.city}, ${loc.country}`,
+          isp: loc.isp,
+          loss: 0,
+          sent: 0,
+          last: null,
+          avg: null,
+          best: null,
+          worst: null,
+          stdev: null,
+          status: 'testing' as const,
+          locationId: loc.id
+        }));
+        setPingLocations(formattedLocations);
+
+        // Set up device info (you could get this from a geolocation API)
+        setDeviceInfo({
+          ip: '203.0.113.42',
+          location: 'San Francisco, CA, USA',
+          isp: 'Cloudflare Inc.',
+          asn: 'AS13335',
+          country: 'United States',
+          city: 'San Francisco',
+          timezone: 'America/Los_Angeles'
+        });
+
+      } catch (error) {
+        console.error('Failed to initialize app:', error);
+        setApiError('Failed to connect to backend services');
+        setWsConnected(false);
+        // Fallback to mock data
+        setPingLocations(initializePingLocations());
+        setDeviceInfo({
+          ip: '203.0.113.42',
+          location: 'San Francisco, CA, USA (Demo Mode)',
+          isp: 'Demo ISP',
+          asn: 'AS13335',
+          country: 'United States',
+          city: 'San Francisco',
+          timezone: 'America/Los_Angeles'
+        });
+      }
     };
 
-    detectDevice();
+    initializeApp();
+
+    // Cleanup on unmount
+    return () => {
+      wsService.disconnect();
+    };
   }, []);
 
   // Real-time ping simulation
